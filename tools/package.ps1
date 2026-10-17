@@ -3,7 +3,7 @@
 #
 #   powershell -ExecutionPolicy Bypass -File tools\package.ps1
 #
-# Run build.cmd first. The texture comes from tools\extract_wave_texture.py.
+# Run build.cmd first. The texture comes from tools\extract_wave_texture.py, then tools\smooth_wave_texture.py.
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -17,6 +17,8 @@ if (-not (Test-Path $dll)) { throw "$dll not found: run build.cmd first." }
 if (-not (Test-Path $texture)) {
     throw "$texture not found: run tools\extract_wave_texture.py with your Skyrim Data folder first."
 }
+$format = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($texture), 84, 4)
+if ($format -eq "DXT1") { throw "$texture is the unsmoothed vanilla texture: run tools\smooth_wave_texture.py first." }
 
 $stage = Join-Path $root "dist\stage"
 if (Test-Path $stage) { Remove-Item -Recurse -Force -LiteralPath $stage }

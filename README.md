@@ -30,9 +30,10 @@ from the water system.
   and its film in the troughs it converts (`bHideOtherTroughWater`), and the in-game menu can switch
   between the two to compare.
 - **Wave textures.** Water mods replace the game's global wave texture, shared by all water. The
-  forge water uses its own copy of the vanilla wave texture by default, so it keeps the vanilla
-  waves while every other water keeps the water mod's. The menu or `sWaveTexture` can switch it to
-  the global one, or to any other texture.
+  forge water uses its own copy of the vanilla wave texture by default (smoothed of its compression
+  blocks, which show on such a small surface), so it keeps the vanilla waves while every other
+  water keeps the water mod's. The menu or `sWaveTexture` can switch it to the global one, or to
+  any other texture.
 
 ## Requirements
 
@@ -80,10 +81,13 @@ alandtse through the vcpkg port in [`cmake/ports`](cmake/ports).
 ### Packaging
 
 The mod archive also contains the vanilla wave texture, a Bethesda asset that is not stored here.
-Extract it from your own game once (needs Python and `py -m pip install lz4`), then package:
+Extract it from your own game once, smooth it and save it as BC7 with
+[texconv](https://github.com/microsoft/DirectXTex/releases), then package (needs Python and
+`py -m pip install lz4 numpy pillow`):
 
 ```
 py tools\extract_wave_texture.py "C:\...\Skyrim Special Edition\Data"
+py tools\smooth_wave_texture.py "C:\...\texconv.exe"
 powershell -ExecutionPolicy Bypass -File tools\package.ps1
 ```
 
@@ -102,7 +106,7 @@ The result is `dist\RealForgeWater-<version>.zip`, laid out as the game's `Data`
 | [`include/Menu.h`](include/Menu.h) | SKSE Menu Framework page |
 | [`include/SKSEMenuFramework.h`](include/SKSEMenuFramework.h) | SKSE Menu Framework SDK header, with a fix to `ColorEdit3` |
 | [`data`](data) | The INI shipped with the mod |
-| [`tools`](tools) | Wave texture extraction and packaging |
+| [`tools`](tools) | Wave texture extraction and smoothing, packaging |
 
 ## License
 
