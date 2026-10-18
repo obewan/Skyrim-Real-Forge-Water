@@ -26,6 +26,8 @@ dist
 
 # Bethesda assets are not stored here: tools\extract_wave_texture.py takes them from the game
 *.dds
+# ...except our own textures, such as the optional file's black glow texture
+!optional/**/*.dds
 
 # Screenshots and the Nexus title image
 images

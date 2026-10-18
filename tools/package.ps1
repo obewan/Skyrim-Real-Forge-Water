@@ -31,3 +31,8 @@ $zip = Join-Path $root "dist\RealForgeWater-$version.zip"
 Compress-Archive -Path (Join-Path $stage "SKSE"), (Join-Path $stage "Textures") -DestinationPath $zip -Force
 Remove-Item -Recurse -Force -LiteralPath $stage
 Write-Host "packaged $zip"
+
+# Optional file: the black glow texture that ENB-style glow cards expect (see the README).
+$glowZip = Join-Path $root "dist\RealForgeWater-FxGlowENB-Fix.zip"
+Compress-Archive -Path (Join-Path $root "optional\FxGlowENB\textures") -DestinationPath $glowZip -Force
+Write-Host "packaged $glowZip"

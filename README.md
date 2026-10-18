@@ -35,6 +35,15 @@ from the water system.
   water keeps the water mod's. The menu or `sWaveTexture` can switch it to the global one, or to
   any other texture.
 
+### Optional file: glow card fix
+
+Some forge mods (Zenithar's Anvil) put an ENB glow card around the hot metal: a flat square drawn
+with `textures\effects\fxglowENB.dds`, which ENB or Community Shaders turns into a real light. The
+game itself has no such texture, so without them the card shows as an orange square, which the forge
+water then reflects. The optional file [`optional/FxGlowENB`](optional/FxGlowENB) is that texture, all
+black as in the ENB resources: with the card's additive blending, black draws nothing. It is not
+needed with ENB or Community Shaders.
+
 ## Requirements
 
 - [SKSE](https://skse.silverlock.org/)
@@ -91,7 +100,8 @@ py tools\smooth_wave_texture.py "C:\...\texconv.exe"
 powershell -ExecutionPolicy Bypass -File tools\package.ps1
 ```
 
-The result is `dist\RealForgeWater-<version>.zip`, laid out as the game's `Data` folder.
+The result is `dist\RealForgeWater-<version>.zip`, laid out as the game's `Data` folder, and the
+optional file `dist\RealForgeWater-FxGlowENB-Fix.zip`.
 
 ## Layout
 
@@ -106,6 +116,7 @@ The result is `dist\RealForgeWater-<version>.zip`, laid out as the game's `Data`
 | [`include/Menu.h`](include/Menu.h) | SKSE Menu Framework page |
 | [`include/SKSEMenuFramework.h`](include/SKSEMenuFramework.h) | SKSE Menu Framework SDK header, with a fix to `ColorEdit3` |
 | [`data`](data) | The INI shipped with the mod |
+| [`optional`](optional) | Optional file: the glow card fix |
 | [`tools`](tools) | Wave texture extraction and smoothing, packaging |
 
 ## License
