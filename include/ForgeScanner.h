@@ -82,11 +82,34 @@ namespace ForgeScanner {
         return {};
     }
 
+    // Fake water is see-through, so it always has an alpha property: this keeps out solid parts that
+    // only have "water" in their name, such as the "RiftenSmithStoneWater01" walls of a Riften trough.
     inline bool LooksLikeWater(RE::BSGeometry* a_geometry, const std::string& a_diffuse) {
-        if (netimmerse_cast<RE::BSWaterShaderProperty*>(a_geometry->GetGeometryRuntimeData().shaderProperty.get())) {
-            return true;
-        }
+        const auto& data = a_geometry->GetGeometryRuntimeData();
+        if (netimmerse_cast<RE::BSWaterShaderProperty*>(data.shaderProperty.get())) return true;
+        if (!data.alphaProperty) return false;
         return Contains(a_diffuse, "water") || Contains(a_geometry->name.c_str(), "water");
+    }
+
+    // Some forge meshes stack several fake water layers in one trough (Animated Forge Water, and the
+    // forge mods built on it such as Zenithar's Anvil). Overlapping real water flickers and disappears
+    // depending on the view angle, so only the top layer of each trough is kept, and the layers under
+    // it are hidden.
+    inline std::vector<RE::BSGeometry*> KeepTopLayers(std::vector<RE::BSGeometry*> a_shapes) {
+        std::ranges::sort(a_shapes, std::ranges::greater{}, [](RE::BSGeometry* a_shape) { return a_shape->worldBound.center.z; });
+
+        std::vector<RE::BSGeometry*> kept;
+        for (auto shape : a_shapes) {
+            const bool covered = std::ranges::any_of(
+                kept, [&](RE::BSGeometry* a_top) { return Util::InSameTrough(a_top->worldBound, shape->worldBound); });
+            if (!covered) {
+                kept.push_back(shape);
+                continue;
+            }
+            shape->SetAppCulled(true);
+            SKSE::log::info("    hid \"{}\", a fake water layer under the real water", shape->name.c_str());
+        }
+        return kept;
     }
 
     // Main thread only.
@@ -126,7 +149,7 @@ namespace ForgeScanner {
         }
 
         if (Settings::mode == 1) {
-            for (auto geometry : waterShapes) {
+            for (auto geometry : KeepTopLayers(std::move(waterShapes))) {
                 WaterConverter::Convert(a_ref, geometry);
             }
             WaterConverter::HideOtherTroughWater();

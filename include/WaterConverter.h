@@ -211,9 +211,8 @@ namespace WaterConverter {
             const bool isFilm = netimmerse_cast<RE::BSEffectShaderProperty*>(shader) ||
                                 netimmerse_cast<RE::BSWaterShaderProperty*>(shader);
             const auto& bound = a_geometry->worldBound;
-            const float horizontal = std::hypot(bound.center.x - water.center.x, bound.center.y - water.center.y);
-            if (isFilm && a_geometry != a_water && !a_geometry->GetAppCulled() && horizontal < 30.0f &&
-                std::abs(bound.center.z - water.center.z) < 15.0f && bound.radius < water.radius * 2.0f) {
+            if (isFilm && a_geometry != a_water && !a_geometry->GetAppCulled() && Util::InSameTrough(bound, water) &&
+                bound.radius < water.radius * 2.0f) {
                 extras.emplace_back(a_geometry);
             }
             return RE::BSVisit::BSVisitControl::kContinue;
@@ -327,8 +326,13 @@ namespace WaterConverter {
                 data.alphaProperty = alpha;
             }
 
-            // Identity transform: the shape keeps exactly the same place in the world.
-            boundNode->local = RE::NiTransform{};
+            // The bounding box lies in the node's space, around the shape's vertices, without the
+            // shape's own transform. Forge water shapes sit far from their parent's origin (236 units
+            // in the Whiterun forge mesh): left in the shape, that offset puts the box at the forge
+            // center, and the water disappears whenever that point is off screen. So the node takes
+            // the shape's transform, and the shape keeps exactly the same place in the world.
+            boundNode->local = a_geometry->local;
+            a_geometry->local = RE::NiTransform{};
             RE::NiPointer<RE::NiAVObject> keepAlive{a_geometry};
             parent->DetachChild(a_geometry);
             boundNode->AttachChild(a_geometry);
@@ -378,9 +382,7 @@ namespace WaterConverter {
             const auto& theirs = shape->worldBound;
             for (auto& [forgeID, geometry] : ours) {
                 const auto& mine = geometry->worldBound;
-                const float horizontal = std::hypot(mine.center.x - theirs.center.x, mine.center.y - theirs.center.y);
-                if (horizontal < 30.0f && std::abs(mine.center.z - theirs.center.z) < 15.0f &&
-                    theirs.radius < mine.radius * 2.0f) {
+                if (Util::InSameTrough(mine, theirs) && theirs.radius < mine.radius * 2.0f) {
                     auto owner = shape->GetUserData();
                     others.emplace_back(forgeID, HiddenWater{object->shape, object->waterType, owner ? owner->GetFormID() : 0});
                     break;
