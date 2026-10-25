@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 # The project name is the name of the SKSE .dll file.
-project(RealForgeWater VERSION 1.0.1 LANGUAGES CXX)
+project(RealForgeWater VERSION 1.0.2 LANGUAGES CXX)
 
 configure_file(
 	${CMAKE_CURRENT_SOURCE_DIR}/cmake/Plugin.h.in

@@ -91,7 +91,8 @@ namespace WaterConverter {
         std::ranges::copy(a_src->noiseTextureData, a_dst->noiseTextureData);
         a_dst->placeableAutoWater = a_src->placeableAutoWater;
         a_dst->placeableLODWater = a_src->placeableLODWater;
-        a_dst->waterShaderMaterial = a_src->waterShaderMaterial;
+        // waterShaderMaterial is left alone: it is a material owned by the source water type, which
+        // must never be shared with ours.
         a_dst->resetNoiseTextures = a_src->resetNoiseTextures;
         a_dst->imageSpace = a_src->imageSpace;
         a_dst->linearVelocity = a_src->linearVelocity;
@@ -357,9 +358,30 @@ namespace WaterConverter {
         return true;
     }
 
+    // Whether an object is only water and surface films, with no solid part such as a trough.
+    inline bool IsWaterOnly(RE::NiAVObject* a_root) {
+        if (!a_root) return false;
+        bool solid = false;
+        RE::BSVisit::TraverseScenegraphGeometries(a_root, [&solid](RE::BSGeometry* a_geometry) {
+            if (netimmerse_cast<RE::BSLightingShaderProperty*>(a_geometry->GetGeometryRuntimeData().shaderProperty.get())) {
+                solid = true;
+                return RE::BSVisit::BSVisitControl::kStop;
+            }
+            return RE::BSVisit::BSVisitControl::kContinue;
+        });
+        return !solid;
+    }
+
+    // How far from a forge other water can be left behind when a mod moves the forge.
+    inline constexpr float LEFT_BEHIND_DISTANCE = 512.0f;
+
     // Other mods can put their own real water in forge troughs: Realistic Water Two places a water
     // activator at every vanilla forge. Its surface sits right on top of ours and hides it, so any
-    // other water found in a converted trough is unregistered and hidden. Main thread only.
+    // other water found in a converted trough is unregistered and hidden.
+    // Those activators stay at the vanilla forge position, so when a town overhaul moves the forge
+    // (Riverwood Has Charm and Walls), their water floats on its own next to the forge, and its
+    // collision blocks NPCs. Trough-sized water near a forge with no trough of its own is hidden too,
+    // and its collision removed. Main thread only.
     inline void HideOtherTroughWater() {
         auto waterSystem = RE::TESWaterSystem::GetSingleton();
         if (!Settings::hideOtherTroughWater || showOtherWater || !waterSystem) return;
@@ -373,6 +395,23 @@ namespace WaterConverter {
         }
         if (ours.empty()) return;
 
+        // Position of each converted forge, with the size of its largest water.
+        struct Forge {
+            RE::FormID id{};
+            RE::NiPoint3 position;
+            float waterRadius{};
+        };
+        std::vector<Forge> forges;
+        for (auto& [forgeID, geometry] : ours) {
+            auto it = std::ranges::find(forges, forgeID, &Forge::id);
+            if (it == forges.end()) {
+                auto ref = RE::TESForm::LookupByID<RE::TESObjectREFR>(forgeID);
+                if (!ref) continue;
+                it = forges.insert(forges.end(), Forge{forgeID, ref->GetPosition(), 0.0f});
+            }
+            it->waterRadius = std::max(it->waterRadius, geometry->worldBound.radius);
+        }
+
         // Collect first: RemoveWater changes the list being iterated.
         std::vector<std::pair<RE::FormID, HiddenWater>> others;
         for (auto& object : waterSystem->waterObjects) {
@@ -380,20 +419,36 @@ namespace WaterConverter {
             if (!shape || std::ranges::any_of(ours, [&](auto& a_ours) { return a_ours.second.get() == shape; })) continue;
 
             const auto& theirs = shape->worldBound;
-            for (auto& [forgeID, geometry] : ours) {
-                const auto& mine = geometry->worldBound;
-                if (Util::InSameTrough(mine, theirs) && theirs.radius < mine.radius * 2.0f) {
-                    auto owner = shape->GetUserData();
-                    others.emplace_back(forgeID, HiddenWater{object->shape, object->waterType, owner ? owner->GetFormID() : 0});
-                    break;
-                }
+            auto owner = shape->GetUserData();
+            const HiddenWater other{object->shape, object->waterType, owner ? owner->GetFormID() : 0};
+            const auto inTrough = std::ranges::find_if(ours, [&](auto& a_ours) {
+                const auto& mine = a_ours.second->worldBound;
+                return Util::InSameTrough(mine, theirs) && theirs.radius < mine.radius * 2.0f;
+            });
+            if (inTrough != ours.end()) {
+                others.emplace_back(inTrough->first, other);
+                continue;
+            }
+
+            if (!owner || !IsWaterOnly(owner->Get3D())) continue;
+            const auto nearForge = std::ranges::find_if(forges, [&](const Forge& a_forge) {
+                const float horizontal = std::hypot(theirs.center.x - a_forge.position.x, theirs.center.y - a_forge.position.y);
+                return horizontal < LEFT_BEHIND_DISTANCE && std::abs(theirs.center.z - a_forge.position.z) < 100.0f &&
+                       theirs.radius < a_forge.waterRadius * 2.0f;
+            });
+            if (nearForge != forges.end()) {
+                others.emplace_back(nearForge->id, other);
+                SKSE::log::info("Other water \"{}\" of ref {:08X} lies next to forge {:08X} with no trough: left behind "
+                                "by a moved forge, its collision is removed",
+                                shape->name.c_str(), other.owner, nearForge->id);
+                if (auto root = owner->Get3D()) root->SetCollisionLayer(RE::COL_LAYER::kNonCollidable);
             }
         }
 
         for (auto& [forgeID, other] : others) {
             other.extras = FindExtras(other.shape.get());
-            SKSE::log::info("Hiding other water \"{}\" of ref {:08X} found in a converted forge trough, with {} "
-                            "other shape(s) of it",
+            SKSE::log::info("Hiding other water \"{}\" of ref {:08X} found in or next to a converted forge trough, "
+                            "with {} other shape(s) of it",
                             other.shape->name.c_str(), other.owner, other.extras.size());
             waterSystem->RemoveWater(other.shape.get());
             other.SetHidden(true);
@@ -412,10 +467,27 @@ namespace WaterConverter {
         }
     }
 
+    // The game shares identical materials between waters (its material cache), whatever their water
+    // type. It also keeps one wave normals object per water type, pointing to the material of the
+    // first water registered with that type, without holding it.
+    inline bool UsedByOtherWater(RE::BSShaderMaterial* a_material, const std::vector<RE::NiPointer<RE::BSGeometry>>& a_ours) {
+        auto waterSystem = RE::TESWaterSystem::GetSingleton();
+        if (!waterSystem) return false;
+        return std::ranges::any_of(waterSystem->waterObjects, [&](auto& a_object) {
+            auto shape = a_object ? a_object->shape.get() : nullptr;
+            if (!shape || std::ranges::any_of(a_ours, [&](auto& a_mine) { return a_mine.get() == shape; })) return false;
+            auto shader = shape->GetGeometryRuntimeData().shaderProperty.get();
+            return shader && shader->material == a_material;
+        });
+    }
+
     // Live look changes without re-registering: re-registering water after its cell has loaded loses
     // its reflections. Instead, refill the material our shapes already use from the forge water type,
     // with the function TESWaterSystem::AddWater uses to build it (TESWaterForm -> BSWaterShaderMaterial).
-    // Only its AE address is known: on other runtimes, fall back to re-registering. Main thread only.
+    // A material shared with other water (when our look matches theirs) is not refilled: that would
+    // change their look too, and can leave the game's wave normals of their water type pointing to a
+    // freed material (a crash). That shape is registered again instead, getting its own material.
+    // Only the fill function's AE address is known: on other runtimes, re-register. Main thread only.
     inline void RefreshOurMaterials() {
         if (showOtherWater || !forgeWater) return;
         if (!REL::Module::IsAE()) {
@@ -425,10 +497,16 @@ namespace WaterConverter {
 
         using FillMaterial_t = void (*)(RE::TESWaterForm*, RE::BSWaterShaderMaterial*);
         static REL::Relocation<FillMaterial_t> fillMaterial{REL::ID(20373)};
-        for (auto& shape : OurShapes()) {
+        const auto ours = OurShapes();
+        for (auto& shape : ours) {
             auto shader = shape->GetGeometryRuntimeData().shaderProperty.get();
             auto material = shader ? shader->material : nullptr;
-            if (material && material->GetType() == RE::BSShaderMaterial::Type::kWater) {
+            if (!material || material->GetType() != RE::BSShaderMaterial::Type::kWater) continue;
+
+            if (UsedByOtherWater(material, ours)) {
+                Unregister(shape.get());
+                Register(shape.get(), forgeWater);
+            } else {
                 fillMaterial(forgeWater, static_cast<RE::BSWaterShaderMaterial*>(material));
             }
         }
@@ -516,23 +594,5 @@ namespace WaterConverter {
             }
             scheduled = false;
         }).detach();
-    }
-
-    class CellDetachHandler : public RE::BSTEventSink<RE::TESCellAttachDetachEvent> {
-    public:
-        RE::BSEventNotifyControl ProcessEvent(const RE::TESCellAttachDetachEvent* a_event,
-                                              RE::BSTEventSource<RE::TESCellAttachDetachEvent>*) override {
-            if (a_event && a_event->reference && !a_event->attached) {
-                Release(a_event->reference->GetFormID());
-            }
-            return RE::BSEventNotifyControl::kContinue;
-        }
-    };
-
-    inline void RegisterCellDetachHandler() {
-        static CellDetachHandler handler;
-        if (auto holder = RE::ScriptEventSourceHolder::GetSingleton()) {
-            holder->AddEventSink<RE::TESCellAttachDetachEvent>(&handler);
-        }
     }
 }

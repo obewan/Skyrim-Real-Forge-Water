@@ -37,8 +37,7 @@ SKSEPluginLoad(const SKSE::LoadInterface *skse) {
     SKSE::GetMessagingInterface()->RegisterListener([](SKSE::MessagingInterface::Message *message) {
         switch (message->type) {
             case SKSE::MessagingInterface::kDataLoaded:
-                ForgeScanner::RegisterCellLoadedHandler();
-                WaterConverter::RegisterCellDetachHandler();
+                ForgeScanner::RegisterCellHandlers();
                 WaterConverter::RefreshWaterType();
                 Menu::Register();
                 break;

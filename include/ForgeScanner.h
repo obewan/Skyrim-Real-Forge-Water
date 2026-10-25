@@ -199,10 +199,31 @@ namespace ForgeScanner {
         }
     };
 
-    inline void RegisterCellLoadedHandler() {
-        static CellLoadedHandler handler;
+    // A forge leaving the loaded area (entering an inn, walking away) has its water unregistered, but
+    // it often keeps its 3D in the cell buffer: when it comes back, no 3D hook runs, and the water
+    // would stay unregistered with its waves frozen. So a reattached forge is scanned again.
+    class CellAttachDetachHandler : public RE::BSTEventSink<RE::TESCellAttachDetachEvent> {
+    public:
+        RE::BSEventNotifyControl ProcessEvent(const RE::TESCellAttachDetachEvent* a_event,
+                                              RE::BSTEventSource<RE::TESCellAttachDetachEvent>*) override {
+            auto ref = a_event ? a_event->reference.get() : nullptr;
+            if (!ref) return RE::BSEventNotifyControl::kContinue;
+
+            if (!a_event->attached) {
+                WaterConverter::Release(ref->GetFormID());
+            } else if (ref->Get3D()) {
+                OnReference3DLoaded(ref);
+            }
+            return RE::BSEventNotifyControl::kContinue;
+        }
+    };
+
+    inline void RegisterCellHandlers() {
+        static CellLoadedHandler loadedHandler;
+        static CellAttachDetachHandler attachDetachHandler;
         if (auto holder = RE::ScriptEventSourceHolder::GetSingleton()) {
-            holder->AddEventSink<RE::TESCellFullyLoadedEvent>(&handler);
+            holder->AddEventSink<RE::TESCellFullyLoadedEvent>(&loadedHandler);
+            holder->AddEventSink<RE::TESCellAttachDetachEvent>(&attachDetachHandler);
         } else {
             SKSE::log::error("Failed to get ScriptEventSourceHolder singleton");
         }
