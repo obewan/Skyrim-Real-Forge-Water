@@ -182,6 +182,23 @@ namespace WaterConverter {
     inline std::unordered_map<RE::FormID, std::vector<RE::NiPointer<RE::BSGeometry>>> converted;
     inline std::unordered_map<RE::FormID, RE::NiAVObject*> scannedRoots;
 
+    // The shader and alpha properties our forge water had before its conversion, per forge reference.
+    // Dropping the last reference to a shader property destroys its render passes, and the renderer
+    // may still have one of them queued: drawing it then calls into freed memory (a crash seen on the
+    // Skyforge water). So they stay alive while the forge is converted, and are freed later, from a
+    // main thread task, once the forge is released.
+    inline std::unordered_map<RE::FormID, std::vector<RE::NiPointer<RE::NiProperty>>> replacedProperties;
+
+    inline void FreeLater(std::vector<RE::NiPointer<RE::NiProperty>> a_properties) {
+        if (a_properties.empty()) return;
+        if (auto task = SKSE::GetTaskInterface()) {
+            task->AddTask([properties = std::move(a_properties)]() mutable { properties.clear(); });
+        } else {
+            // No task interface: never free them rather than risk freeing them during a draw.
+            for (auto& property : a_properties) property->IncRefCount();
+        }
+    }
+
     // Other mods' water hidden in our troughs, per forge reference, kept to show it again in the
     // menu's comparison mode.
     struct HiddenWater {
@@ -268,6 +285,10 @@ namespace WaterConverter {
         std::scoped_lock lock(convertedMutex);
         scannedRoots.erase(a_refID);
         hiddenOthers.erase(a_refID);
+        if (auto kept = replacedProperties.find(a_refID); kept != replacedProperties.end()) {
+            FreeLater(std::move(kept->second));
+            replacedProperties.erase(kept);
+        }
         auto it = converted.find(a_refID);
         if (it == converted.end()) return;
 
@@ -323,6 +344,12 @@ namespace WaterConverter {
             // needs registering, since the game registers water for water activators only.
             auto& data = a_geometry->GetGeometryRuntimeData();
             if (!netimmerse_cast<RE::BSWaterShaderProperty*>(data.shaderProperty.get())) {
+                {
+                    std::scoped_lock lock(convertedMutex);
+                    auto& kept = replacedProperties[a_ref->GetFormID()];
+                    if (data.shaderProperty) kept.emplace_back(data.shaderProperty.get());
+                    if (data.alphaProperty) kept.emplace_back(data.alphaProperty.get());
+                }
                 data.shaderProperty = shader;
                 data.alphaProperty = alpha;
             }
