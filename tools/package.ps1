@@ -32,6 +32,21 @@ Compress-Archive -Path (Join-Path $stage "SKSE"), (Join-Path $stage "Textures") 
 Remove-Item -Recurse -Force -LiteralPath $stage
 Write-Host "packaged $zip"
 
+# Optional file for modders: the debug DLL with its PDB, installed over the main file (built with
+# "build.cmd debug"; skipped when that build is missing).
+$debugDll = Join-Path $root "build\debug\RealForgeWater.dll"
+$debugPdb = Join-Path $root "build\debug\RealForgeWater.pdb"
+if ((Test-Path $debugDll) -and (Test-Path $debugPdb)) {
+    New-Item -ItemType Directory -Force (Join-Path $stage "SKSE\Plugins") | Out-Null
+    Copy-Item $debugDll, $debugPdb (Join-Path $stage "SKSE\Plugins")
+    $debugZip = Join-Path $root "dist\RealForgeWater-$version-Debug.zip"
+    Compress-Archive -Path (Join-Path $stage "SKSE") -DestinationPath $debugZip -Force
+    Remove-Item -Recurse -Force -LiteralPath $stage
+    Write-Host "packaged $debugZip"
+} else {
+    Write-Host "no debug build found (build.cmd debug): debug archive skipped"
+}
+
 # Optional file: the black glow texture that ENB-style glow cards expect (see the README).
 $glowZip = Join-Path $root "dist\RealForgeWater-FxGlowENB-Fix.zip"
 Compress-Archive -Path (Join-Path $root "optional\FxGlowENB\textures") -DestinationPath $glowZip -Force
