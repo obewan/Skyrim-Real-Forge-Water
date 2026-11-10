@@ -188,13 +188,25 @@ namespace ForgeScanner {
                                               RE::BSTEventSource<RE::TESCellFullyLoadedEvent>*) override {
             if (!a_event || !a_event->cell) return RE::BSEventNotifyControl::kContinue;
 
-            a_event->cell->ForEachReference([](RE::TESObjectREFR* a_ref) {
+            // This event is not always sent from the main thread, and converting changes the scene
+            // graph and the water system: the scan is done later, from a main thread task.
+            std::vector<RE::ObjectRefHandle> forges;
+            a_event->cell->ForEachReference([&forges](RE::TESObjectREFR* a_ref) {
                 auto base = a_ref ? a_ref->GetBaseObject() : nullptr;
                 if (base && IsForgeCached(base)) {
-                    ScanForge(a_ref);
+                    forges.push_back(a_ref->GetHandle());
                 }
                 return RE::BSContainer::ForEachResult::kContinue;
             });
+            if (forges.empty()) return RE::BSEventNotifyControl::kContinue;
+
+            if (auto task = SKSE::GetTaskInterface()) {
+                task->AddTask([forges = std::move(forges)]() {
+                    for (auto& handle : forges) {
+                        if (auto ref = handle.get()) ScanForge(ref.get());
+                    }
+                });
+            }
             return RE::BSEventNotifyControl::kContinue;
         }
     };
